@@ -1,4 +1,4 @@
-# app.py — CleanCopy: Global AI Leak Detector
+# app.py — CleanCopy: Fixed Firebase Init
 import os
 import re
 import time
@@ -6,11 +6,9 @@ import json
 import textwrap
 from datetime import datetime
 import streamlit as st
-import firebase_admin
-from firebase_admin import firestore, credentials
 
 # ===========================
-# CONFIG — CleanCopy Branding
+# CONFIG
 # ===========================
 APP_NAME = "CleanCopy"
 MODEL_NAME = "gemini-1.5-flash"
@@ -20,12 +18,25 @@ MAX_CHARS_FREE = 10000
 MAX_CHARS_PRO = 50000
 GEMINI_HARD_LIMIT_CHARS = 30000
 
-# Firebase
-FIREBASE_CRED_JSON = os.getenv("FIREBASE_SERVICE_ACCOUNT")
-if FIREBASE_CRED_JSON:
-    cred = credentials.Certificate(json.loads(FIREBASE_CRED_JSON))
-    firebase_admin.initialize_app(cred)
-FIRESTORE_DB = firestore.client() if firebase_admin.apps else None
+# Firebase (Safe Init)
+FIRESTORE_DB = None
+try:
+    import firebase_admin
+    from firebase_admin import firestore, credentials
+
+    FIREBASE_CRED_JSON = os.getenv("FIREBASE_SERVICE_ACCOUNT")
+    if FIREBASE_CRED_JSON:
+        cred = credentials.Certificate(json.loads(FIREBASE_CRED_JSON))
+        # Initialize safely (no duplicates)
+        if not firebase_admin._apps:  # Use internal check to avoid error
+            firebase_admin.initialize_app(cred)
+        FIRESTORE_DB = firestore.client()
+    HAS_FIREBASE = FIRESTORE_DB is not None
+except ImportError:
+    HAS_FIREBASE = False
+except Exception as e:
+    st.error(f"Firebase setup error: {e}")
+    HAS_FIREBASE = False
 
 # Gemini
 try:
@@ -37,18 +48,12 @@ except:
     HAS_GENAI = False
 
 # ===========================
-# AI DETECTION (Global Reddit-style + ChatGPT leaks)
+# AI DETECTION
 # ===========================
 AI_PROMPT_PATTERNS = [
-    r"\bas an a[i1l] language model\b",
-    r"\bi am an a[i1l]\b",
-    r"\bi'?m an a[i1l]\b",
-    r"\blanguage model\b",
-    r"\[system prompt[:\]]",
-    r"\bi'?d be happy to assist\b",
-    r"\bi'?m here to help\b",
-    r"\bif you want, i can also\b",
-    r"\bdo you want me to\b",
+    r"\bas an a[i1l] language model\b", r"\bi am an a[i1l]\b", r"\bi'?m an a[i1l]\b",
+    r"\blanguage model\b", r"$$ system prompt[: $$]", r"\bi'?d be happy to assist\b",
+    r"\bi'?m here to help\b", r"\bif you want, i can also\b", r"\bdo you want me to\b",
     r"\bhere'?s your\b",
 ]
 
@@ -80,8 +85,9 @@ def analyze_style(text):
             risks.append({"snippet": g, "reason": "AI email tone", "fix": "Remove"})
 
     for kw in ["crucial", "delve", "dive deep"]:
-        if tl.count(kw) >= 2:
-            risks.append({"snippet": f"'{kw}' ×{tl.count(kw)}", "reason": "AI filler", "fix": "Vary words"})
+        count = tl.count(kw)
+        if count >= 2:
+            risks.append({"snippet": f"'{kw}' ×{count}", "reason": "AI filler", "fix": "Vary words"})
 
     for intro in AI_STYLE_KEYWORDS:
         if intro in tl:
@@ -164,27 +170,33 @@ Return ONLY the cleaned article. No JSON."""
         return {"ok": False, "error": str(e)}
 
 # ===========================
-# FIREBASE AUTH
+# FIREBASE AUTH (Safe)
 # ===========================
 def get_user_plan(email_or_token):
-    if not FIRESTORE_DB:
-        return {"is_pro": False}
-    doc = FIRESTORE_DB.collection("pro_access").document(str(email_or_token)).get()
-    if doc.exists:
-        data = doc.to_dict()
-        if data.get("expires", 0) > time.time():
-            return {"is_pro": True, "expires": data["expires"], "email": data.get("email")}
-    docs = FIRESTORE_DB.collection("pro_access").where("email", "==", email_or_token).stream()
-    for d in docs:
-        data = d.to_dict()
-        if data.get("expires", 0) > time.time():
-            return {"is_pro": True, "expires": data["expires"], "email": data["email"]}
+    if not HAS_FIREBASE or not FIRESTORE_DB:
+        return {"is_pro": False, "error": "Firebase not connected (Pro features disabled)"}
+    
+    try:
+        doc = FIRESTORE_DB.collection("pro_access").document(str(email_or_token)).get()
+        if doc.exists:
+            data = doc.to_dict()
+            if data.get("expires", 0) > time.time():
+                return {"is_pro": True, "expires": data["expires"], "email": data.get("email")}
+        
+        docs = FIRESTORE_DB.collection("pro_access").where("email", "==", email_or_token).stream()
+        for d in docs:
+            data = d.to_dict()
+            if data.get("expires", 0) > time.time():
+                return {"is_pro": True, "expires": data["expires"], "email": data["email"]}
+    except Exception as e:
+        st.error(f"Pro check error: {e}")
+    
     return {"is_pro": False}
 
 # ===========================
-# UI — CleanCopy Global
+# UI
 # ===========================
-st.set_page_config(page_title=APP_NAME, layout="wide", page_icon="clean")
+st.set_page_config(page_title=APP_NAME, layout="wide", page_icon="🧹")
 
 st.markdown("""
 <style>
@@ -196,13 +208,13 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title(f"CleanCopy")
+st.title(f"🧹 {APP_NAME}")
 st.markdown("*AI wrote it. We fix it. For journalists worldwide.*")
 
 # Auth
 qp = st.query_params
 token = qp.get("token", [None])[0]
-email = st.text_input("Email (optional)", type="email") or qp.get("email", [None])[0]
+email = st.text_input("Email (optional for Pro)", type="email") or qp.get("email", [None])[0]
 
 plan = get_user_plan(token or email or "")
 is_pro = plan["is_pro"]
@@ -212,17 +224,19 @@ plan_name = "Pro" if is_pro else "Free"
 col1, col2 = st.columns(2)
 with col1:
     if is_pro:
-        st.success(f"Pro Active · Expires: {datetime.fromtimestamp(plan['expires']).strftime('%b %d')}")
+        st.success(f"✅ Pro Active · Expires: {datetime.fromtimestamp(plan['expires']).strftime('%b %d')}")
     else:
-        st.info(f"Free · Max {MAX_CHARS_FREE:,} chars")
+        st.info(f"🆓 Free · Max {MAX_CHARS_FREE:,} chars")
+        if "error" in plan:
+            st.warning(plan["error"])
 with col2:
     if not is_pro:
-        st.markdown("[Upgrade to Pro →](https://www.mindscopeai.net/upgrade)")
+        st.markdown("[🔒 Upgrade to Pro →](https://www.mindscopeai.net/upgrade)")
 
 # Sidebar
 with st.sidebar:
     st.header("Settings")
-    st.write(f"**Plan:** {plan_name}")
+    st.write(f"**Plan:** {plan_name} | **Firebase OK:** {'Yes' if HAS_FIREBASE else 'No'}")
     language = st.selectbox("Language", ["English", "Hindi", "Polish", "Spanish", "Other"])
     region = st.selectbox("Region", ["India", "Poland", "US", "UK", "Global"])
 
@@ -230,7 +244,7 @@ with st.sidebar:
 col_in, col_out = st.columns(2)
 
 with col_in:
-    st.subheader("Input Draft")
+    st.subheader("📝 Input Draft")
     sample = textwrap.dedent("""\
     As an AI language model, I'd be happy to help. Here's your article:
     In today's digital age, it's crucial to understand climate change. Not only rising seas, but also extreme weather play a crucial role.
@@ -238,33 +252,50 @@ with col_in:
     text = st.text_area("", value=sample, height=350, label_visibility="collapsed")
 
 with col_out:
-    st.subheader("Cleaned & QC")
-    if st.button("Run CleanCopy", type="primary", use_container_width=True):
+    st.subheader("✅ Cleaned & QC Results")
+    if st.button("🔍 Run CleanCopy", type="primary", use_container_width=True):
         if not text.strip():
-            st.warning("Paste text!")
+            st.warning("Paste text first!")
         else:
-            with st.spinner("Cleaning..."):
+            with st.spinner("Analyzing for AI leaks..."):
                 data = local_qc(text)
-                if len(text) <= max_chars and is_pro and HAS_GENAI:
+                doc_len = len(text)
+
+                if doc_len > max_chars:
+                    st.error(f"Document too long ({doc_len:,} chars) for {plan_name} plan.")
+                elif is_pro and HAS_GENAI:
                     g = gemini_clean(data["clean_text"], language, region, max_chars)
                     if g["ok"]:
                         data["clean_text"] = g["clean_text"]
+                        st.info(f"Gemini polish applied in {g['elapsed']:.1f}s")
 
-                # Results
+                # Metrics
                 c1, c2, c3 = st.columns(3)
                 c1.metric("AI Risk", f"{data['ai_probability_score']}%")
                 c2.metric("Severity", data['severity_score'])
                 c3.metric("Plan", plan_name)
 
+                # Leaks
                 if data["prompt_leaks"]:
-                    st.error("Prompt Leaks")
+                    st.error(f"🚨 {len(data['prompt_leaks'])} Prompt Leaks Found")
                     for l in data["prompt_leaks"]:
-                        st.markdown(f"**Remove:** `{l['snippet']}`")
+                        st.markdown(f"**Leak:** `{l['snippet'][:100]}...`  \n**Fix:** {l['fix']}")
+                        st.markdown("---")
 
+                # Style Flags
                 if data["other_risks"]:
-                    st.warning("AI Style Flags")
+                    st.warning(f"⚠️ {len(data['other_risks'])} AI Style Flags")
                     for r in data["other_risks"][:3]:
-                        st.markdown(f"• {r['reason']}")
+                        st.markdown(f"• **{r['snippet']}** → {r['reason']} ({r['fix']})")
 
-                st.success("Clean Text")
-                st.code(data["clean_text"], language="text")
+                # Clean Text
+                st.success("✨ Clean Text Ready (Copy & Publish)")
+                st.text_area("Output:", value=data["clean_text"], height=350, label_visibility="collapsed")
+
+                # Debug
+                with st.expander("🔧 Debug"):
+                    st.json({"Firebase": HAS_FIREBASE, "Gemini": HAS_GENAI, "Chars": doc_len, "Pro": is_pro})
+
+# Footer
+st.markdown("---")
+st.markdown("*CleanCopy: AI-proof your copy. No domains needed – powered by Streamlit.*")
