@@ -254,7 +254,12 @@ with col_in:
     As an AI language model, I'd be happy to help. Here's your article:
     In today's digital age, it's crucial to understand climate change. Not only rising seas, but also extreme weather play a crucial role.
     """)
-    text = st.text_area("", value=sample, height=350, label_visibility="collapsed")
+    text = st.text_area(
+    "Paste your article draft here",
+    value=sample,
+    height=350,
+    label_visibility="collapsed"
+)
 
 with col_out:
     st.subheader("✅ Cleaned & QC Results")
@@ -295,7 +300,7 @@ with col_out:
 
                 # Clean Text
                 st.success("✨ Clean Text Ready (Copy & Publish)")
-                st.text_area("Output:", value=data["clean_text"], height=350, label_visibility="collapsed")
+                st.text_area("Cleaned article (ready to copy)",value=data["clean_text"],height=350,label_visibility="collapsed")
 
                 # Debug
                 with st.expander("🔧 Debug"):
