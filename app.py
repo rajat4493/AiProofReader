@@ -214,8 +214,13 @@ st.markdown("*AI wrote it. We fix it. For journalists worldwide.*")
 # Auth
 qp = st.query_params
 token = qp.get("token", [None])[0]
-email = st.text_input("Email (optional for Pro)", type="email") or qp.get("email", [None])[0]
-
+email_input = st.text_input(
+    "Email (optional for Pro)", 
+    type="default", 
+    placeholder="you@example.com",
+    help="Enter to check Pro status"
+)
+email = email_input.strip() or qp.get("email", [None])[0] or ""
 plan = get_user_plan(token or email or "")
 is_pro = plan["is_pro"]
 max_chars = MAX_CHARS_PRO if is_pro else MAX_CHARS_FREE
