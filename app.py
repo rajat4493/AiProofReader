@@ -6,6 +6,7 @@ import json
 import textwrap
 from datetime import datetime
 import streamlit as st
+import streamlit.components.v1 as components
 
 # ===========================
 # CONFIG
@@ -280,8 +281,12 @@ with col_in:
 )
 
 with col_out:
-    st.subheader("✅ Cleaned & QC Results")
-    if st.button("🔍 Run CleanCopy", type="primary", use_container_width=True):
+    st.subheader("Cleaned & QC Results")
+
+    # Initialize data as None
+    data = None
+
+    if st.button("Run CleanCopy", type="primary", use_container_width=True):
         if not text.strip():
             st.warning("Paste text first!")
         else:
@@ -297,33 +302,62 @@ with col_out:
                         data["clean_text"] = g["clean_text"]
                         st.info(f"Gemini polish applied in {g['elapsed']:.1f}s")
 
-                # Metrics
-                c1, c2, c3 = st.columns(3)
-                c1.metric("AI Risk", f"{data['ai_probability_score']}%")
-                c2.metric("Severity", data['severity_score'])
-                c3.metric("Plan", plan_name)
+                # === AUTO-SCROLL ===
+                components.html("<script>window.scrollTo(0, document.body.scrollHeight);</script>", height=0)
 
-                # Leaks
-                if data["prompt_leaks"]:
-                    st.error(f"🚨 {len(data['prompt_leaks'])} Prompt Leaks Found")
-                    for l in data["prompt_leaks"]:
-                        st.markdown(f"**Leak:** `{l['snippet'][:100]}...`  \n**Fix:** {l['fix']}")
-                        st.markdown("---")
+    # === SHOW RESULTS ONLY IF DATA EXISTS ===
+    if data is not None:
+        # Metrics
+        c1, c2, c3 = st.columns(3)
+        c1.metric("AI Risk", f"{data['ai_probability_score']}%")
+        c2.metric("Severity", data['severity_score'])
+        c3.metric("Plan", plan_name)
 
-                # Style Flags
-                if data["other_risks"]:
-                    st.warning(f"⚠️ {len(data['other_risks'])} AI Style Flags")
-                    for r in data["other_risks"][:3]:
-                        st.markdown(f"• **{r['snippet']}** → {r['reason']} ({r['fix']})")
+        # Leaks
+        if data["prompt_leaks"]:
+            st.error(f"{len(data['prompt_leaks'])} Prompt Leaks Found")
+            for l in data["prompt_leaks"]:
+                st.markdown(f"**Leak:** `{l['snippet'][:100]}...`  \n**Fix:** {l['fix']}")
+                st.markdown("---")
 
-                # Clean Text
-                st.success("✨ Clean Text Ready (Copy & Publish)")
-                st.text_area("Cleaned article (ready to copy)",value=data["clean_text"],height=350,label_visibility="collapsed")
+        # Style Flags
+        if data["other_risks"]:
+            st.warning(f"{len(data['other_risks'])} AI Style Flags")
+            for r in data["other_risks"][:3]:
+                st.markdown(f"• **{r['snippet']}** → {r['reason']} ({r['fix']})")
 
-                # Debug
-                with st.expander("🔧 Debug"):
-                    st.json({"Firebase": HAS_FIREBASE, "Gemini": HAS_GENAI, "Chars": doc_len, "Pro": is_pro})
+        # Clean Text
+        st.success("Clean Text Ready (Copy & Publish)")
+        st.text_area(
+            "Cleaned article (ready to copy)",
+            value=data["clean_text"],
+            height=400,
+            label_visibility="collapsed"
+        )
 
+        # Debug
+        with st.expander("Debug"):
+            st.json({
+                "Firebase": HAS_FIREBASE,
+                "Gemini": HAS_GENAI,
+                "Chars": doc_len,
+                "Pro": is_pro,
+                "Source": data.get("_meta", {}).get("source")
+            })
+    else:
+        st.info("Click **Run CleanCopy** to analyze your text.")
 # Footer
-st.markdown("---")
+st.set_page_config(page_title=APP_NAME, layout="wide", page_icon="clean")
+
+# CLEAN CSS — NO COMMENTS
+st.markdown("""
+<style>
+    .main { padding: 2rem; max-width: 1200px; margin: auto; overflow-y: auto; }
+    .stButton > button { background: #1976D2; color: white; font-weight: bold; }
+    .metric { background: #f5f5f5; padding: 1rem; border-radius: 10px; text-align: center; }
+    .pro { background: #FFD700; color: #000; padding: 0.3rem 0.6rem; border-radius: 20px; font-weight: bold; }
+    h1 { color: #1976D2; text-align: center; }
+    .stButton > button:focus { scroll-margin-top: 100px; }
+</style>
+""", unsafe_allow_html=True)
 st.markdown("*CleanCopy: AI-proof your copy. No domains needed – powered by Streamlit.*")
