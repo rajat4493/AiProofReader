@@ -1,4 +1,4 @@
-# app.py — CleanCopy: Firebase + Gemini + Auto-Scroll + Wix Upgrade
+# app.py — CleanCopy: Firebase + Gemini + Multi-Strategy Scroll
 import os
 import re
 import time
@@ -8,6 +8,11 @@ from datetime import datetime
 
 import streamlit as st
 import streamlit.components.v1 as components
+
+# ----------------------------------------------------------------------
+# PAGE CONFIG - MUST BE FIRST
+# ----------------------------------------------------------------------
+st.set_page_config(page_title="CleanCopy", layout="wide", page_icon="🧹")
 
 # ----------------------------------------------------------------------
 # CONFIG
@@ -21,11 +26,15 @@ MAX_CHARS_FREE = 10_000
 MAX_CHARS_PRO  = 50_000
 GEMINI_HARD_LIMIT_CHARS = 30_000
 
+# SCROLL STRATEGY: 'auto' | 'query_params' | 'aggressive'
+SCROLL_MODE = os.getenv("SCROLL_MODE", "auto")
+
 # ----------------------------------------------------------------------
 # FIREBASE (SAFE INITIALISATION)
 # ----------------------------------------------------------------------
 FIRESTORE_DB = None
 HAS_FIREBASE = False
+FIREBASE_ERROR = None
 
 try:
     import firebase_admin
@@ -39,7 +48,7 @@ try:
         FIRESTORE_DB = firestore.client()
         HAS_FIREBASE = True
 except Exception as e:
-    st.warning(f"Firebase not connected: {e}")
+    FIREBASE_ERROR = str(e)
     HAS_FIREBASE = False
 
 # ----------------------------------------------------------------------
@@ -65,8 +74,8 @@ AI_PROMPT_PATTERNS = [
 ]
 
 AI_STYLE_KEYWORDS = [
-    "in the world of", "in today’s digital age", "it is crucial to",
-    "let’s delve into", "dive deep", "not only", "but also", "play a crucial role"
+    "in the world of", "in today's digital age", "it is crucial to",
+    "let's delve into", "dive deep", "not only", "but also", "play a crucial role"
 ]
 
 FORMAL_GREETINGS = ["i hope this email finds you well"]
@@ -209,30 +218,150 @@ def get_user_plan(email_or_token):
     return {"is_pro": False}
 
 # ----------------------------------------------------------------------
+# SCROLL INJECTION STRATEGIES
+# ----------------------------------------------------------------------
+def inject_scroll_auto():
+    """Standard multi-strategy scroll"""
+    components.html(
+        """
+        <script>
+        (function() {
+            const scrollToResults = () => {
+                // Strategy 1: Streamlit container
+                const container = window.parent.document.querySelector('[data-testid="stApp"]');
+                if (container) {
+                    container.scrollTop = container.scrollHeight;
+                }
+                
+                // Strategy 2: Parent iframe communication
+                try {
+                    window.parent.postMessage({
+                        type: 'streamlit:scroll',
+                        data: { behavior: 'smooth', block: 'end' }
+                    }, '*');
+                } catch(e) {}
+                
+                // Strategy 3: Current window
+                window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+            };
+            
+            if (document.readyState === 'complete') {
+                setTimeout(scrollToResults, 300);
+            } else {
+                window.addEventListener('load', () => setTimeout(scrollToResults, 300));
+            }
+        })();
+        </script>
+        """,
+        height=0,
+    )
+
+def inject_scroll_aggressive():
+    """Nuclear option - forces scroll every possible way"""
+    components.html(
+        """
+        <script>
+        (function() {
+            const forceScroll = () => {
+                // 1. All possible containers
+                const selectors = [
+                    '[data-testid="stApp"]',
+                    '[data-testid="stVerticalBlock"]',
+                    'section[data-testid="stVerticalBlock"]',
+                    '.main',
+                    'body',
+                    'html'
+                ];
+                
+                selectors.forEach(sel => {
+                    try {
+                        const el = window.parent.document.querySelector(sel);
+                        if (el) el.scrollTop = el.scrollHeight;
+                    } catch(e) {}
+                    
+                    try {
+                        const el = document.querySelector(sel);
+                        if (el) el.scrollTop = el.scrollHeight;
+                    } catch(e) {}
+                });
+                
+                // 2. Direct scroll commands
+                try { window.parent.scrollTo(0, 999999); } catch(e) {}
+                try { window.scrollTo(0, 999999); } catch(e) {}
+                
+                // 3. Find results div and scroll into view
+                try {
+                    const results = document.getElementById('results');
+                    if (results) results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                } catch(e) {}
+                
+                // 4. PostMessage to parent
+                try {
+                    window.parent.postMessage({ type: 'streamlit:scroll' }, '*');
+                    window.top.postMessage({ type: 'streamlit:scroll' }, '*');
+                } catch(e) {}
+            };
+            
+            // Execute multiple times to override Streamlit's render
+            setTimeout(forceScroll, 100);
+            setTimeout(forceScroll, 300);
+            setTimeout(forceScroll, 600);
+            setTimeout(forceScroll, 1000);
+        })();
+        </script>
+        """,
+        height=0,
+    )
+
+# ----------------------------------------------------------------------
 # PAGE CONFIG + CSS
 # ----------------------------------------------------------------------
-st.set_page_config(page_title=APP_NAME, layout="wide", page_icon="broom")
-
+# Enhanced CSS with scroll forcing
 st.markdown("""
 <style>
     .main { padding: 2rem; max-width: 1200px; margin: auto; }
     .stButton > button { background:#1976D2; color:white; font-weight:bold; }
     .metric { background:#f5f5f5; padding:1rem; border-radius:10px; text-align:center; }
     h1 { color:#1976D2; text-align:center; }
+    
+    /* Force scrollable containers */
+    html, body, [data-testid="stApp"] {
+        overflow-y: auto !important;
+        scroll-behavior: smooth !important;
+    }
+    
+    section[data-testid="stVerticalBlock"] {
+        overflow-y: auto !important;
+    }
+    
+    /* Scroll anchor */
+    #results {
+        scroll-margin-top: 20px;
+        padding-top: 10px;
+    }
+    
+    /* Ensure columns are scrollable */
+    [data-testid="column"] {
+        overflow-y: visible !important;
+    }
 </style>
 """, unsafe_allow_html=True)
+
+# Show Firebase error if exists
+if FIREBASE_ERROR:
+    st.sidebar.warning(f"Firebase: {FIREBASE_ERROR}")
 
 # ----------------------------------------------------------------------
 # HEADER
 # ----------------------------------------------------------------------
-st.title(f"{APP_NAME}")
+st.title(f"🧹 {APP_NAME}")
 st.markdown("*AI wrote it. We fix it. For journalists worldwide.*")
 
 # ----------------------------------------------------------------------
 # AUTH + PLAN DISPLAY
 # ----------------------------------------------------------------------
 qp = st.query_params
-token = qp.get("token", [None])[0]
+token = qp.get("token")
 email_input = st.text_input(
     "Email (optional for Pro)", placeholder="you@example.com",
     help="Enter to check Pro status"
@@ -249,23 +378,30 @@ col1, col2 = st.columns(2)
 with col1:
     if is_pro:
         exp = datetime.fromtimestamp(plan["expires"]).strftime("%b %d, %Y")
-        st.success(f"Pro Active · Expires: {exp}")
+        st.success(f"✅ Pro Active · Expires: {exp}")
     else:
-        st.info(f"Free · Max {MAX_CHARS_FREE:,} chars")
+        st.info(f"🆓 Free · Max {MAX_CHARS_FREE:,} chars")
         if plan.get("error"):
             st.warning(plan["error"])
 with col2:
     if not is_pro:
-        st.markdown("[Upgrade to Pro →](https://www.mindscopeai.net/pricing-plans)")
+        st.markdown("[⬆️ Upgrade to Pro →](https://www.mindscopeai.net/pricing-plans)")
 
 # ----------------------------------------------------------------------
 # SIDEBAR SETTINGS
 # ----------------------------------------------------------------------
 with st.sidebar:
-    st.header("Settings")
-    st.write(f"**Plan:** {plan_name} | **Firebase:** {'OK' if HAS_FIREBASE else 'No'}")
+    st.header("⚙️ Settings")
+    st.write(f"**Plan:** {plan_name} | **Firebase:** {'✅' if HAS_FIREBASE else '❌'}")
+    st.write(f"**Scroll Mode:** {SCROLL_MODE}")
     language = st.selectbox("Language", ["English", "Hindi", "Polish", "Spanish", "Other"])
     region   = st.selectbox("Region",   ["India", "Poland", "US", "UK", "Global"])
+    
+    st.markdown("---")
+    st.markdown("**Scroll Debug**")
+    if st.button("Test Auto Scroll"):
+        st.session_state.scroll_trigger = True
+        st.rerun()
 
 # ----------------------------------------------------------------------
 # MAIN COLUMNS
@@ -274,7 +410,7 @@ col_in, col_out = st.columns(2)
 
 # ---------- INPUT ----------
 with col_in:
-    st.subheader("Input Draft")
+    st.subheader("📝 Input Draft")
     sample = textwrap.dedent("""\
     As an AI language model, I'd be happy to help. Here's your article:
     In today's digital age, it's crucial to understand climate change. Not only rising seas, but also extreme weather play a crucial role.
@@ -287,92 +423,149 @@ with col_in:
     )
 
 # ---------- OUTPUT ----------
-# Replace lines 265-305 in your app.py with this:
-
-# Replace lines 265-305 in your app.py with this:
-
-# Replace the entire OUTPUT section (lines 282-335) with this:
-
 with col_out:
-    st.subheader("Cleaned & QC Results")
+    st.subheader("✨ Cleaned & QC Results")
     
-    # Check if we should show results
+    # NUCLEAR OPTION: Query params mode
+    if SCROLL_MODE == "query_params":
+        if qp.get("view") == "results":
+            qp.clear()  # Clean URL immediately
+            st.session_state.show_results = True
+    
     show_results = st.session_state.get("show_results", False)
     
-    if st.button("Run CleanCopy", type="primary", use_container_width=True):
+    if st.button("🚀 Run CleanCopy", type="primary", use_container_width=True):
         if not text.strip():
-            st.warning("Paste text first!")
+            st.warning("⚠️ Paste text first!")
         else:
-            with st.spinner("Analyzing..."):
+            with st.spinner("🔄 Analyzing..."):
                 data = local_qc(text)
                 doc_len = len(text)
 
                 if doc_len > max_chars:
-                    st.error(f"Text exceeds {plan_name} limit ({doc_len:,} > {max_chars:,})")
+                    st.error(f"❌ Text exceeds {plan_name} limit ({doc_len:,} > {max_chars:,})")
                 else:
                     if HAS_GENAI and is_pro:
                         g = gemini_clean(data["clean_text"], language, region, max_chars)
                         if g["ok"]:
                             data["clean_text"] = g["clean_text"]
-                            st.info(f"Gemini polish in {g['elapsed']:.1f}s")
+                            st.info(f"✨ Gemini polish in {g['elapsed']:.1f}s")
                     
-                    # Store and trigger scroll
                     st.session_state.results = data
                     st.session_state.show_results = True
-                    st.rerun()  # Force immediate display
+                    st.session_state.scroll_trigger = True
+                    
+                    # NUCLEAR: Use query params
+                    if SCROLL_MODE == "query_params":
+                        qp["view"] = "results"
+                    
+                    st.rerun()
+
+    # Inject scroll based on mode
+    if st.session_state.get("scroll_trigger"):
+        if SCROLL_MODE == "aggressive":
+            inject_scroll_aggressive()
+        elif SCROLL_MODE == "auto":
+            inject_scroll_auto()
+        # query_params mode doesn't need injection
+        
+        st.session_state.scroll_trigger = False
 
     # Display results
     if show_results and "results" in st.session_state:
         data = st.session_state.results
         
+        # Visible anchor
+        st.markdown('<div id="results"></div>', unsafe_allow_html=True)
         st.markdown("---")
         st.markdown("## 📊 Analysis Results")
         
         c1, c2, c3 = st.columns(3)
         with c1:
+            delta_color = "inverse" if data['ai_probability_score'] > 80 else "normal"
             st.metric("AI Risk", f"{data['ai_probability_score']}%", 
                      delta=f"Severity {data['severity_score']}/10")
         with c2:
-            st.metric("Issues", len(data['prompt_leaks']) + len(data['other_risks']))
+            total_issues = len(data['prompt_leaks']) + len(data['other_risks'])
+            st.metric("Issues Found", total_issues)
         with c3:
-            st.metric("Plan", plan_name)
+            st.metric("Plan", plan_name, delta="Active" if is_pro else "Free")
 
         if data["prompt_leaks"]:
             with st.expander(f"🚨 {len(data['prompt_leaks'])} Critical Leaks", expanded=True):
-                for l in data["prompt_leaks"]:
-                    st.error(f"**Found:** `{l['snippet'][:80]}...`")
-                    st.caption(f"💡 {l['fix']}")
+                for i, l in enumerate(data["prompt_leaks"], 1):
+                    st.error(f"**Leak #{i}:** `{l['snippet'][:100]}...`")
+                    st.caption(f"💡 **Fix:** {l['fix']}")
+                    if i < len(data["prompt_leaks"]):
+                        st.markdown("---")
 
         if data["other_risks"]:
             with st.expander(f"⚠️ {len(data['other_risks'])} Style Flags", expanded=False):
-                for r in data["other_risks"]:
-                    st.warning(f"**{r['snippet']}** • {r['reason']}")
-                    st.caption(f"💡 {r['fix']}")
+                for i, r in enumerate(data["other_risks"], 1):
+                    st.warning(f"**Flag #{i}:** {r['snippet']}")
+                    st.caption(f"📝 {r['reason']} → {r['fix']}")
+                    if i < len(data["other_risks"]):
+                        st.markdown("---")
 
         st.markdown("### ✅ Cleaned Output")
         cleaned = st.text_area(
             "Copy cleaned text below",
             value=data["clean_text"],
             height=350,
-            label_visibility="collapsed"
+            label_visibility="collapsed",
+            key="cleaned_output"
         )
         
         col_a, col_b = st.columns(2)
         with col_a:
             if st.button("🔄 Analyze New Text", use_container_width=True):
                 st.session_state.show_results = False
+                if "results" in st.session_state:
+                    del st.session_state.results
+                if SCROLL_MODE == "query_params":
+                    qp.clear()
                 st.rerun()
         with col_b:
             st.download_button(
-                "💾 Download",
+                "💾 Download Clean Copy",
                 data=cleaned,
-                file_name=f"cleaned_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+                file_name=f"cleaned_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                mime="text/plain",
                 use_container_width=True
             )
     else:
         st.info("👆 Click **Run CleanCopy** to analyze your text")
+
 # ----------------------------------------------------------------------
 # FOOTER
 # ----------------------------------------------------------------------
 st.markdown("---")
-st.markdown("*CleanCopy – AI-proof your copy. Powered by Streamlit.*")
+st.markdown(f"*{APP_NAME} — AI-proof your copy. Powered by Streamlit · Mode: {SCROLL_MODE}*")
+
+# WIX IFRAME INTEGRATION INSTRUCTIONS
+st.markdown("""
+<details>
+<summary><b>📦 Wix Embedding Instructions</b></summary>
+
+Add this to your Wix page's **Custom Code** (Settings → Custom Code → Body End):
+
+```html
+<script>
+window.addEventListener('message', (e) => {
+    if (e.data.type === 'streamlit:scroll') {
+        const iframe = document.querySelector('iframe[src*="streamlit"]');
+        if (iframe) {
+            iframe.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        }
+    }
+});
+</script>
+```
+
+**Environment Variables for Streamlit Cloud:**
+- `SCROLL_MODE=aggressive` (for stubborn iframes)
+- `SCROLL_MODE=query_params` (most reliable)
+- `SCROLL_MODE=auto` (default, balanced)
+
+</details>
+""", unsafe_allow_html=True)
