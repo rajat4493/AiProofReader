@@ -174,22 +174,34 @@ Return ONLY the cleaned article. No JSON."""
 # ===========================
 def get_user_plan(email_or_token):
     if not HAS_FIREBASE or not FIRESTORE_DB:
-        return {"is_pro": False, "error": "Firebase not connected (Pro features disabled)"}
+        return {"is_pro": False, "error": "Firebase not connected"}
+
+    token = str(email_or_token).strip()
     
+    # BLOCK EMPTY / INVALID
+    if not token or token == "None":
+        return {"is_pro": False}
+
     try:
-        doc = FIRESTORE_DB.collection("pro_access").document(str(email_or_token)).get()
+        # 1. Try as TOKEN (document ID)
+        doc_ref = FIRESTORE_DB.collection("pro_access").document(token)
+        doc = doc_ref.get()
         if doc.exists:
             data = doc.to_dict()
             if data.get("expires", 0) > time.time():
                 return {"is_pro": True, "expires": data["expires"], "email": data.get("email")}
-        
-        docs = FIRESTORE_DB.collection("pro_access").where("email", "==", email_or_token).stream()
-        for d in docs:
-            data = d.to_dict()
-            if data.get("expires", 0) > time.time():
-                return {"is_pro": True, "expires": data["expires"], "email": data["email"]}
+
+        # 2. Try as EMAIL (search field)
+        if "@" in token:  # rough email check
+            query = FIRESTORE_DB.collection("pro_access").where("email", "==", token).limit(1).stream()
+            for d in query:
+                data = d.to_dict()
+                if data.get("expires", 0) > time.time():
+                    return {"is_pro": True, "expires": data["expires"], "email": data["email"], "token": d.id}
+
     except Exception as e:
-        st.error(f"Pro check error: {e}")
+        st.error(f"Pro check failed: {e}")
+        return {"is_pro": False, "error": str(e)}
     
     return {"is_pro": False}
 
@@ -212,31 +224,37 @@ st.title(f"🧹 {APP_NAME}")
 st.markdown("*AI wrote it. We fix it. For journalists worldwide.*")
 
 # Auth
+# === AUTH: Token from URL, Email from input ===
 qp = st.query_params
-token = qp.get("token", [None])[0]
+token = qp.get("token", [None])[0]  # From URL: ?token=abc123
 email_input = st.text_input(
-    "Email (optional for Pro)", 
-    type="default", 
+    "Email (optional for Pro)",
+    type="default",
     placeholder="you@example.com",
     help="Enter to check Pro status"
 )
-email = email_input.strip() or qp.get("email", [None])[0] or ""
-plan = get_user_plan(token or email or "")
-is_pro = plan["is_pro"]
+email = email_input.strip() or ""   # Clean input
+token = token or ""                 # Clean token
+
+# === CHECK PLAN (token first, then email) ===
+plan = get_user_plan(token or email)
+is_pro = plan.get("is_pro", False)
 max_chars = MAX_CHARS_PRO if is_pro else MAX_CHARS_FREE
 plan_name = "Pro" if is_pro else "Free"
 
+# === DISPLAY ===
 col1, col2 = st.columns(2)
 with col1:
     if is_pro:
-        st.success(f"✅ Pro Active · Expires: {datetime.fromtimestamp(plan['expires']).strftime('%b %d')}")
+        expires = datetime.fromtimestamp(plan["expires"]).strftime("%b %d, %Y")
+        st.success(f"Pro Active · Expires: {expires}")
     else:
-        st.info(f"🆓 Free · Max {MAX_CHARS_FREE:,} chars")
-        if "error" in plan:
+        st.info(f"Free · Max {MAX_CHARS_FREE:,} chars")
+        if plan.get("error"):
             st.warning(plan["error"])
 with col2:
     if not is_pro:
-        st.markdown("[🔒 Upgrade to Pro →](https://www.mindscopeai.net/upgrade)")
+        st.markdown("[Upgrade to Pro →](https://www.mindscopeai.net/cleancopy)")
 
 # Sidebar
 with st.sidebar:
