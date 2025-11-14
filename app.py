@@ -290,12 +290,9 @@ with col_in:
 with col_out:
     st.subheader("Cleaned & QC Results")
 
-    # ---- Session state init ----
-    if "run_clicked" not in st.session_state:
-        st.session_state.run_clicked = False
-        st.session_state.data = None
+    # Initialize data as None (your existing)
+    data = None
 
-    # ---- Button ----
     if st.button("Run CleanCopy", type="primary", use_container_width=True):
         if not text.strip():
             st.warning("Paste text first!")
@@ -312,24 +309,23 @@ with col_out:
                         data["clean_text"] = g["clean_text"]
                         st.info(f"Gemini polish applied in {g['elapsed']:.1f}s")
 
-                # Save & flag
-                st.session_state.data = data
-                st.session_state.run_clicked = True
+                # === SCROLL FIX: Anchor at top of results ===
+                st.markdown('<div id="results-anchor"></div>', unsafe_allow_html=True)
 
-    # ---- RESULTS (only after run) ----
-    if st.session_state.run_clicked and st.session_state.data is not None:
-        # Anchor + smooth scroll
-        st.markdown('<div id="results"></div>', unsafe_allow_html=True)
+    # === SHOW RESULTS ONLY IF DATA EXISTS ===
+    if data is not None:
+        # === JS SCROLL TO ANCHOR (works on Cloud, wide layout) ===
         components.html("""
         <script>
-            setTimeout(() => {
-                const el = document.getElementById('results');
-                if (el) el.scrollIntoView({behavior: 'smooth', block: 'start'});
-            }, 100);
+            // Scroll to anchor after 500ms (after render)
+            setTimeout(function() {
+                var anchor = document.getElementById('results-anchor');
+                if (anchor) {
+                    anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+            }, 500);
         </script>
-        """, height=0)
-
-        data = st.session_state.data
+        """, height=0, width=0)
 
         # Metrics
         c1, c2, c3 = st.columns(3)
@@ -344,13 +340,13 @@ with col_out:
                 st.markdown(f"**Leak:** `{l['snippet'][:100]}...`  \n**Fix:** {l['fix']}")
                 st.markdown("---")
 
-        # Style flags
+        # Style Flags
         if data["other_risks"]:
             st.warning(f"{len(data['other_risks'])} AI Style Flags")
             for r in data["other_risks"][:3]:
                 st.markdown(f"• **{r['snippet']}** → {r['reason']} ({r['fix']})")
 
-        # Clean text
+        # Clean Text
         st.success("Clean Text Ready (Copy & Publish)")
         st.text_area(
             "Cleaned article (ready to copy)",
@@ -360,17 +356,16 @@ with col_out:
         )
 
         # Debug
-        with st.expander("Debug"):
+        with st.expander("🔧 Debug"):
             st.json({
                 "Firebase": HAS_FIREBASE,
                 "Gemini": HAS_GENAI,
-                "Chars": len(text),
+                "Chars": doc_len,
                 "Pro": is_pro,
                 "Source": data.get("_meta", {}).get("source")
             })
     else:
         st.info("Click **Run CleanCopy** to analyze your text.")
-
 # ----------------------------------------------------------------------
 # FOOTER
 # ----------------------------------------------------------------------
