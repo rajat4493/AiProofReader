@@ -289,6 +289,8 @@ with col_in:
 # ---------- OUTPUT ----------
 # Replace lines 265-305 in your app.py with this:
 
+# Replace lines 265-305 in your app.py with this:
+
 with col_out:
     st.subheader("Cleaned & QC Results")
 
