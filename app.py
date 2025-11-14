@@ -287,85 +287,74 @@ with col_in:
     )
 
 # ---------- OUTPUT ----------
+# Replace lines 265-305 in your app.py with this:
+
 with col_out:
     st.subheader("Cleaned & QC Results")
 
-    # Initialize data as None (your existing)
-    data = None
-
+    # Anchor for scroll target
+    results_anchor = st.empty()
+    
     if st.button("Run CleanCopy", type="primary", use_container_width=True):
         if not text.strip():
             st.warning("Paste text first!")
         else:
-            with st.spinner("Analyzing for AI leaks..."):
+            with st.spinner("Analyzing..."):
                 data = local_qc(text)
                 doc_len = len(text)
 
-                if doc_len > max_chars:
-                    st.error(f"Document too long ({doc_len:,} chars) for {plan_name} plan.")
-                elif is_pro and HAS_GENAI:
-                    g = gemini_clean(data["clean_text"], language, region, max_chars)
+                if doc_len > MAX_CHARS_FREE:
+                    st.error(f"Too long for Free plan ({doc_len:,} > {MAX_CHARS_FREE:,})")
+                elif HAS_GENAI:
+                    g = gemini_clean(data["clean_text"], language, region, MAX_CHARS_FREE)
                     if g["ok"]:
                         data["clean_text"] = g["clean_text"]
-                        st.info(f"Gemini polish applied in {g['elapsed']:.1f}s")
+                        st.info(f"Gemini polish in {g['elapsed']:.1f}s")
 
-                # === SCROLL FIX: Anchor at top of results ===
-                st.markdown('<div id="results-anchor"></div>', unsafe_allow_html=True)
+                # Store results in session state
+                st.session_state.results = data
+                st.session_state.show_results = True
 
-    # === SHOW RESULTS ONLY IF DATA EXISTS ===
-    if data is not None:
-        # === JS SCROLL TO ANCHOR (works on Cloud, wide layout) ===
-        components.html("""
-        <script>
-            // Scroll to anchor after 500ms (after render)
-            setTimeout(function() {
-                var anchor = document.getElementById('results-anchor');
-                if (anchor) {
-                    anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }
-            }, 500);
-        </script>
-        """, height=0, width=0)
-
-        # Metrics
+    # Display results if available
+    if st.session_state.get("show_results"):
+        data = st.session_state.results
+        
+        with results_anchor:
+            st.markdown('<div id="results-section"></div>', unsafe_allow_html=True)
+        
+        st.markdown("## Results")
         c1, c2, c3 = st.columns(3)
         c1.metric("AI Risk", f"{data['ai_probability_score']}%")
         c2.metric("Severity", data['severity_score'])
         c3.metric("Plan", plan_name)
 
-        # Leaks
         if data["prompt_leaks"]:
-            st.error(f"{len(data['prompt_leaks'])} Prompt Leaks Found")
+            st.error(f"{len(data['prompt_leaks'])} Leaks Found")
             for l in data["prompt_leaks"]:
                 st.markdown(f"**Leak:** `{l['snippet'][:100]}...`  \n**Fix:** {l['fix']}")
                 st.markdown("---")
 
-        # Style Flags
         if data["other_risks"]:
-            st.warning(f"{len(data['other_risks'])} AI Style Flags")
+            st.warning(f"{len(data['other_risks'])} Style Flags")
             for r in data["other_risks"][:3]:
                 st.markdown(f"• **{r['snippet']}** → {r['reason']} ({r['fix']})")
 
-        # Clean Text
-        st.success("Clean Text Ready (Copy & Publish)")
-        st.text_area(
-            "Cleaned article (ready to copy)",
-            value=data["clean_text"],
-            height=400,
-            label_visibility="collapsed"
-        )
-
-        # Debug
-        with st.expander("🔧 Debug"):
-            st.json({
-                "Firebase": HAS_FIREBASE,
-                "Gemini": HAS_GENAI,
-                "Chars": doc_len,
-                "Pro": is_pro,
-                "Source": data.get("_meta", {}).get("source")
-            })
+        st.success("Clean Text")
+        st.text_area("Output", value=data["clean_text"], height=400, label_visibility="collapsed")
+        
+        # CSS-based scroll using :target selector
+        st.markdown("""
+        <style>
+            #results-section:target {
+                scroll-margin-top: 100px;
+            }
+        </style>
+        <script>
+            window.location.hash = '#results-section';
+        </script>
+        """, unsafe_allow_html=True)
     else:
-        st.info("Click **Run CleanCopy** to analyze your text.")
+        st.info("Click **Run CleanCopy** to start.")
 # ----------------------------------------------------------------------
 # FOOTER
 # ----------------------------------------------------------------------
