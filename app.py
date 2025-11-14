@@ -1,75 +1,69 @@
-# app.py — CleanCopy: Firebase + Gemini + Multi-Strategy Scroll
+# app.py — CleanCopy: Basic Code + Container Scroll
 import os
 import re
 import time
-import json
 import textwrap
 from datetime import datetime
-
 import streamlit as st
-import streamlit.components.v1 as components
 
-# ----------------------------------------------------------------------
-# PAGE CONFIG - MUST BE FIRST
-# ----------------------------------------------------------------------
-st.set_page_config(page_title="CleanCopy", layout="wide", page_icon="🧹")
-
-# ----------------------------------------------------------------------
+# ===========================
 # CONFIG
-# ----------------------------------------------------------------------
+# ===========================
 APP_NAME = "CleanCopy"
 MODEL_NAME = "gemini-1.5-flash"
-
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-MAX_CHARS_FREE = 10_000
-MAX_CHARS_PRO  = 50_000
-GEMINI_HARD_LIMIT_CHARS = 30_000
+MAX_CHARS_FREE = 10000
+MAX_CHARS_PRO = 50000
+GEMINI_HARD_LIMIT_CHARS = 30000
 
-# SCROLL STRATEGY: 'auto' | 'query_params' | 'aggressive'
-SCROLL_MODE = os.getenv("SCROLL_MODE", "auto")
-
-# ----------------------------------------------------------------------
-# FIREBASE (SAFE INITIALISATION)
-# ----------------------------------------------------------------------
-FIRESTORE_DB = None
-HAS_FIREBASE = False
-FIREBASE_ERROR = None
-
-try:
-    import firebase_admin
-    from firebase_admin import firestore, credentials
-
-    cred_json = os.getenv("FIREBASE_SERVICE_ACCOUNT")
-    if cred_json:
-        cred = credentials.Certificate(json.loads(cred_json))
-        if not firebase_admin._apps:
-            firebase_admin.initialize_app(cred)
-        FIRESTORE_DB = firestore.client()
-        HAS_FIREBASE = True
-except Exception as e:
-    FIREBASE_ERROR = str(e)
-    HAS_FIREBASE = False
-
-# ----------------------------------------------------------------------
-# GEMINI
-# ----------------------------------------------------------------------
+# ===========================
+# Gemini import
+# ===========================
 HAS_GENAI = False
 try:
     import google.generativeai as genai
     if GEMINI_API_KEY:
         genai.configure(api_key=GEMINI_API_KEY)
-        HAS_GENAI = True
-except Exception:
-    pass
+    HAS_GENAI = True
+except ImportError:
+    HAS_GENAI = False
 
-# ----------------------------------------------------------------------
-# AI DETECTION PATTERNS
-# ----------------------------------------------------------------------
+# ===========================
+# Firebase import (Safe)
+# ===========================
+FIRESTORE_DB = None
+HAS_FIREBASE = False
+try:
+    import firebase_admin
+    from firebase_admin import firestore, credentials
+
+    FIREBASE_CRED_JSON = os.getenv("FIREBASE_SERVICE_ACCOUNT")
+    if FIREBASE_CRED_JSON:
+        cred = credentials.Certificate(json.loads(FIREBASE_CRED_JSON))
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app(cred)
+        FIRESTORE_DB = firestore.client()
+    HAS_FIREBASE = FIRESTORE_DB is not None
+except ImportError:
+    HAS_FIREBASE = False
+except Exception as e:
+    st.error(f"Firebase setup error: {e}")
+    HAS_FIREBASE = False
+
+# ===========================
+# AI Detection Patterns
+# ===========================
 AI_PROMPT_PATTERNS = [
-    r"\bas an a[i1l] language model\b", r"\bi am an a[i1l]\b", r"\bi'?m an a[i1l]\b",
-    r"\blanguage model\b", r"\$\$ system prompt[:\s]\$\$", r"\bi'?d be happy to assist\b",
-    r"\bi'?m here to help\b", r"\bif you want, i can also\b", r"\bdo you want me to\b",
+    r"\bas an a[i1l] language model\b",
+    r"\bi am an a[i1l]\b",
+    r"\bi'?m an a[i1l]\b",
+    r"\blanguage model\b",
+    r"\[system prompt[:\]]",
+    r"\bi'?d be happy to assist\b",
+    r"\bi'?m here to help\b",
+    r"\bif you want, i can also\b",
+    r"\bdo you want me to\b",
     r"\bhere'?s your\b",
 ]
 
@@ -80,15 +74,16 @@ AI_STYLE_KEYWORDS = [
 
 FORMAL_GREETINGS = ["i hope this email finds you well"]
 
-# ----------------------------------------------------------------------
-# UTILS
-# ----------------------------------------------------------------------
-def split_sentences(text):
+# ===========================
+# Utilities
+# ===========================
+def split_sentences(text: str):
     return [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
 
-def analyze_style(text):
+def analyze_ai_style(text: str) -> list:
     risks = []
-    t, tl = text, text.lower()
+    t = text
+    tl = t.lower()
 
     if t.count("—") >= 4:
         risks.append({"snippet": "Multiple em dashes (—)", "reason": "AI overuse", "fix": "Use commas"})
@@ -122,7 +117,7 @@ def analyze_style(text):
 
     return risks
 
-def local_qc(text):
+def local_qc(text: str) -> dict:
     lines = text.splitlines()
     leaks = []
     cleaned_lines = []
@@ -138,7 +133,7 @@ def local_qc(text):
             cleaned_lines.append(line)
 
     cleaned = "\n".join(cleaned_lines)
-    style_risks = analyze_style(text)
+    style_risks = analyze_ai_style(text)
 
     prob = 97 if leaks else 80 if style_risks else 40
     sev = 8 if leaks else 5 if style_risks else 1
@@ -152,9 +147,9 @@ def local_qc(text):
         "_meta": {"source": "local"}
     }
 
-# ----------------------------------------------------------------------
-# GEMINI CLEAN (Pro only)
-# ----------------------------------------------------------------------
+# ===========================
+# Gemini Clean
+# ===========================
 def gemini_clean(text, lang, region, max_chars):
     if not HAS_GENAI or not GEMINI_API_KEY:
         return {"ok": False, "error": "Gemini not available"}
@@ -185,122 +180,56 @@ Return ONLY the cleaned article. No JSON."""
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
-# ----------------------------------------------------------------------
-# FIREBASE AUTH
-# ----------------------------------------------------------------------
+# ===========================
+# Firebase Auth
+# ===========================
 def get_user_plan(email_or_token):
     if not HAS_FIREBASE or not FIRESTORE_DB:
-        return {"is_pro": False, "error": "Firebase not connected"}
-
+        return {"is_pro": False, "error": "Firebase not connected (Pro features disabled)"}
+    
     token = str(email_or_token).strip()
     if not token or token == "None":
         return {"is_pro": False}
 
     try:
-        # 1. Token as document ID
-        doc_ref = FIRESTORE_DB.collection("pro_access").document(token)
-        doc = doc_ref.get()
+        doc = FIRESTORE_DB.collection("pro_access").document(token).get()
         if doc.exists:
             data = doc.to_dict()
             if data.get("expires", 0) > time.time():
                 return {"is_pro": True, "expires": data["expires"], "email": data.get("email")}
 
-        # 2. Email lookup
-        if "@" in token:
-            query = FIRESTORE_DB.collection("pro_access").where("email", "==", token).limit(1).stream()
-            for d in query:
-                data = d.to_dict()
-                if data.get("expires", 0) > time.time():
-                    return {"is_pro": True, "expires": data["expires"], "email": data["email"], "token": d.id}
+        docs = FIRESTORE_DB.collection("pro_access").where("email", "==", email_or_token).stream()
+        for d in docs:
+            data = d.to_dict()
+            if data.get("expires", 0) > time.time():
+                return {"is_pro": True, "expires": data["expires"], "email": data["email"]}
     except Exception as e:
-        return {"is_pro": False, "error": str(e)}
-
+        st.error(f"Pro check error: {e}")
+    
     return {"is_pro": False}
 
-# ----------------------------------------------------------------------
-# SCROLL INJECTION STRATEGIES
-# ----------------------------------------------------------------------
-def trigger_scroll_to_results():
-    """Pure Streamlit scroll using container manipulation"""
-    # Use st.empty() placeholder to force re-render at bottom
-    st.markdown(
-        """
-        <style>
-        @keyframes scrollToBottom {
-            to { scroll-behavior: smooth; }
-        }
-        .scroll-target {
-            animation: scrollToBottom 0.1s;
-            scroll-margin-top: 100px;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
-    
-def inject_scroll_auto():
-    """Not used - pure Python approach preferred"""
-    pass
+# ===========================
+# UI
+# ===========================
+st.set_page_config(page_title=APP_NAME, layout="wide", page_icon="🧹")
 
-def inject_scroll_aggressive():
-    """Not used - pure Python approach preferred"""
-    pass
-
-# ----------------------------------------------------------------------
-# PAGE CONFIG + CSS
-# ----------------------------------------------------------------------
-# Enhanced CSS with scroll forcing
 st.markdown("""
 <style>
     .main { padding: 2rem; max-width: 1200px; margin: auto; }
-    .stButton > button { background:#1976D2; color:white; font-weight:bold; }
-    .metric { background:#f5f5f5; padding:1rem; border-radius:10px; text-align:center; }
-    h1 { color:#1976D2; text-align:center; }
-    
-    /* Force scrollable containers */
-    html, body, [data-testid="stApp"] {
-        overflow-y: auto !important;
-        scroll-behavior: smooth !important;
-    }
-    
-    section[data-testid="stVerticalBlock"] {
-        overflow-y: auto !important;
-    }
-    
-    /* Scroll anchor */
-    #results {
-        scroll-margin-top: 20px;
-        padding-top: 10px;
-    }
-    
-    /* Ensure columns are scrollable */
-    [data-testid="column"] {
-        overflow-y: visible !important;
-    }
+    .stButton > button { background: #1976D2; color: white; font-weight: bold; }
+    .metric { background: #f5f5f5; padding: 1rem; border-radius: 10px; text-align: center; }
+    .pro { background: #FFD700; color: #000; padding: 0.3rem 0.6rem; border-radius: 20px; font-weight: bold; }
+    h1 { color: #1976D2; text-align: center; }
 </style>
 """, unsafe_allow_html=True)
 
-# Show Firebase error if exists
-if FIREBASE_ERROR:
-    st.sidebar.warning(f"Firebase: {FIREBASE_ERROR}")
-
-# ----------------------------------------------------------------------
-# HEADER
-# ----------------------------------------------------------------------
 st.title(f"🧹 {APP_NAME}")
 st.markdown("*AI wrote it. We fix it. For journalists worldwide.*")
 
-# ----------------------------------------------------------------------
-# AUTH + PLAN DISPLAY
-# ----------------------------------------------------------------------
+# Auth
 qp = st.query_params
-token = qp.get("token")
-email_input = st.text_input(
-    "Email (optional for Pro)", placeholder="you@example.com",
-    help="Enter to check Pro status"
-)
-email = email_input.strip() or ""
-token = token or ""
+token = qp.get("token", [None])[0]
+email = st.text_input("Email (optional for Pro)", type="default", placeholder="you@example.com", help="Enter to check Pro status") or qp.get("email", [None])[0]
 
 plan = get_user_plan(token or email)
 is_pro = plan.get("is_pro", False)
@@ -310,196 +239,80 @@ plan_name = "Pro" if is_pro else "Free"
 col1, col2 = st.columns(2)
 with col1:
     if is_pro:
-        exp = datetime.fromtimestamp(plan["expires"]).strftime("%b %d, %Y")
-        st.success(f"✅ Pro Active · Expires: {exp}")
+        expires = datetime.fromtimestamp(plan["expires"]).strftime("%b %d, %Y")
+        st.success(f"Pro Active · Expires: {expires}")
     else:
-        st.info(f"🆓 Free · Max {MAX_CHARS_FREE:,} chars")
+        st.info(f"Free · Max {MAX_CHARS_FREE:,} chars")
         if plan.get("error"):
             st.warning(plan["error"])
 with col2:
     if not is_pro:
-        st.markdown("[⬆️ Upgrade to Pro →](https://www.mindscopeai.net/pricing-plans)")
+        st.markdown("[Upgrade to Pro →](https://www.mindscopeai.net/pricing-plans)")
 
-# ----------------------------------------------------------------------
-# SIDEBAR SETTINGS
-# ----------------------------------------------------------------------
+# Sidebar
 with st.sidebar:
-    st.header("⚙️ Settings")
-    st.write(f"**Plan:** {plan_name} | **Firebase:** {'✅' if HAS_FIREBASE else '❌'}")
-    st.write(f"**Scroll Mode:** {SCROLL_MODE}")
+    st.header("Settings")
+    st.write(f"**Plan:** {plan_name} | **Firebase OK:** {'Yes' if HAS_FIREBASE else 'No'}")
     language = st.selectbox("Language", ["English", "Hindi", "Polish", "Spanish", "Other"])
-    region   = st.selectbox("Region",   ["India", "Poland", "US", "UK", "Global"])
-    
-    st.markdown("---")
-    st.markdown("**Scroll Debug**")
-    if st.button("Test Auto Scroll"):
-        st.session_state.scroll_trigger = True
-        st.rerun()
+    region = st.selectbox("Region", ["India", "Poland", "US", "UK", "Global"])
 
-# ----------------------------------------------------------------------
-# MAIN COLUMNS
-# ----------------------------------------------------------------------
+# Main
 col_in, col_out = st.columns(2)
 
-# ---------- INPUT ----------
 with col_in:
-    st.subheader("📝 Input Draft")
+    st.subheader("Input Draft")
     sample = textwrap.dedent("""\
     As an AI language model, I'd be happy to help. Here's your article:
     In today's digital age, it's crucial to understand climate change. Not only rising seas, but also extreme weather play a crucial role.
     """)
-    text = st.text_area(
-        "Paste your article draft here",
-        value=sample,
-        height=350,
-        label_visibility="collapsed"
-    )
+    text = st.text_area("Paste your article draft here", value=sample, height=350, label_visibility="collapsed")
 
-# ---------- OUTPUT ----------
 with col_out:
-    st.subheader("✨ Cleaned & QC Results")
-    
-    # NUCLEAR OPTION: Query params mode
-    if SCROLL_MODE == "query_params":
-        if qp.get("view") == "results":
-            st.session_state.show_results = True
-            # Don't clear immediately - let it render first
-    
-    show_results = st.session_state.get("show_results", False)
-    
-    if st.button("🚀 Run CleanCopy", type="primary", use_container_width=True):
+    st.subheader("✅ Cleaned & QC Results")
+
+    # === RESULTS CONTAINER (SCROLLABLE) ===
+    results_container = st.container()
+
+    if st.button("🔍 Run CleanCopy", type="primary", use_container_width=True):
         if not text.strip():
-            st.warning("⚠️ Paste text first!")
+            st.warning("Paste text!")
         else:
-            with st.spinner("🔄 Analyzing..."):
+            with st.spinner("Analyzing..."):
                 data = local_qc(text)
                 doc_len = len(text)
 
                 if doc_len > max_chars:
-                    st.error(f"❌ Text exceeds {plan_name} limit ({doc_len:,} > {max_chars:,})")
-                else:
-                    if HAS_GENAI and is_pro:
-                        g = gemini_clean(data["clean_text"], language, region, max_chars)
-                        if g["ok"]:
-                            data["clean_text"] = g["clean_text"]
-                            st.info(f"✨ Gemini polish in {g['elapsed']:.1f}s")
-                    
-                    st.session_state.results = data
-                    st.session_state.show_results = True
-                    
-                    # NUCLEAR: Use query params for guaranteed scroll
-                    if SCROLL_MODE == "query_params":
-                        qp["view"] = "results"
-                    
-                    st.rerun()
+                    st.error(f"Document too long for {plan_name} plan.")
+                elif is_pro and HAS_GENAI:
+                    g = gemini_clean(data["clean_text"], language, region, max_chars)
+                    if g["ok"]:
+                        data["clean_text"] = g["clean_text"]
 
-    # Display results FIRST, then clean params
-    if show_results and "results" in st.session_state:
-        data = st.session_state.results
-        
-        # Clear query params AFTER render
-        if SCROLL_MODE == "query_params" and qp.get("view") == "results":
-            # Use a separate flag to prevent infinite loop
-            if not st.session_state.get("params_cleared"):
-                st.session_state.params_cleared = True
-            else:
-                qp.clear()
-                st.session_state.params_cleared = False
-        
-        # Visual separator and anchor
-        st.markdown("---")
-        st.markdown('<div class="scroll-target"></div>', unsafe_allow_html=True)
-        st.markdown("## 📊 Analysis Results")
-        
-        # Add visual indicator that results are ready
-        st.success("✅ Analysis Complete - Results Below")
-        
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            delta_color = "inverse" if data['ai_probability_score'] > 80 else "normal"
-            st.metric("AI Risk", f"{data['ai_probability_score']}%", 
-                     delta=f"Severity {data['severity_score']}/10")
-        with c2:
-            total_issues = len(data['prompt_leaks']) + len(data['other_risks'])
-            st.metric("Issues Found", total_issues)
-        with c3:
-            st.metric("Plan", plan_name, delta="Active" if is_pro else "Free")
+                # === RENDER IN CONTAINER (AUTO-SCROLLS) ===
+                with results_container:
+                    # Metrics
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("AI Risk", f"{data['ai_probability_score']}%")
+                    c2.metric("Severity", data['severity_score'])
+                    c3.metric("Plan", plan_name)
 
-        if data["prompt_leaks"]:
-            with st.expander(f"🚨 {len(data['prompt_leaks'])} Critical Leaks", expanded=True):
-                for i, l in enumerate(data["prompt_leaks"], 1):
-                    st.error(f"**Leak #{i}:** `{l['snippet'][:100]}...`")
-                    st.caption(f"💡 **Fix:** {l['fix']}")
-                    if i < len(data["prompt_leaks"]):
-                        st.markdown("---")
+                    if data["prompt_leaks"]:
+                        st.error("Prompt Leaks")
+                        for l in data["prompt_leaks"]:
+                            st.markdown(f"**Remove:** `{l['snippet']}`")
 
-        if data["other_risks"]:
-            with st.expander(f"⚠️ {len(data['other_risks'])} Style Flags", expanded=False):
-                for i, r in enumerate(data["other_risks"], 1):
-                    st.warning(f"**Flag #{i}:** {r['snippet']}")
-                    st.caption(f"📝 {r['reason']} → {r['fix']}")
-                    if i < len(data["other_risks"]):
-                        st.markdown("---")
+                    if data["other_risks"]:
+                        st.warning("AI Style Flags")
+                        for r in data["other_risks"][:3]:
+                            st.markdown(f"• {r['reason']}")
 
-        st.markdown("### ✅ Cleaned Output")
-        cleaned = st.text_area(
-            "Copy cleaned text below",
-            value=data["clean_text"],
-            height=350,
-            label_visibility="collapsed",
-            key="cleaned_output"
-        )
-        
-        col_a, col_b = st.columns(2)
-        with col_a:
-            if st.button("🔄 Analyze New Text", use_container_width=True):
-                st.session_state.show_results = False
-                st.session_state.params_cleared = False
-                if "results" in st.session_state:
-                    del st.session_state.results
-                qp.clear()
-                st.rerun()
-        with col_b:
-            st.download_button(
-                "💾 Download Clean Copy",
-                data=cleaned,
-                file_name=f"cleaned_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                mime="text/plain",
-                use_container_width=True
-            )
+                    st.success("Clean Text")
+                    st.text_area("Output:", value=data["clean_text"], height=350, label_visibility="collapsed")
+
     else:
-        st.info("👆 Click **Run CleanCopy** to analyze your text")
+        with results_container:
+            st.info("Gemini not configured — using local cleaned text only.")
 
-# ----------------------------------------------------------------------
-# FOOTER
-# ----------------------------------------------------------------------
+# Footer
 st.markdown("---")
-st.markdown(f"*{APP_NAME} — AI-proof your copy. Powered by Streamlit · Mode: {SCROLL_MODE}*")
-
-# WIX IFRAME INTEGRATION INSTRUCTIONS
-st.markdown("""
-<details>
-<summary><b>📦 Wix Embedding Instructions</b></summary>
-
-Add this to your Wix page's **Custom Code** (Settings → Custom Code → Body End):
-
-```html
-<script>
-window.addEventListener('message', (e) => {
-    if (e.data.type === 'streamlit:scroll') {
-        const iframe = document.querySelector('iframe[src*="streamlit"]');
-        if (iframe) {
-            iframe.scrollIntoView({ behavior: 'smooth', block: 'end' });
-        }
-    }
-});
-</script>
-```
-
-**Environment Variables for Streamlit Cloud:**
-- `SCROLL_MODE=aggressive` (for stubborn iframes)
-- `SCROLL_MODE=query_params` (most reliable)
-- `SCROLL_MODE=auto` (default, balanced)
-
-</details>
-""", unsafe_allow_html=True)
+st.markdown("*CleanCopy: AI-proof your copy. Questions? [Contact](https://www.mindscopeai.net/contact)*")
