@@ -254,7 +254,7 @@ with col1:
             st.warning(plan["error"])
 with col2:
     if not is_pro:
-        st.markdown("[Upgrade to Pro →](https://www.mindscopeai.net/cleancopy)")
+        st.markdown("[Upgrade to Pro →](https://www.mindscopeai.net//pricing-plans)")
 
 # Sidebar
 with st.sidebar:
