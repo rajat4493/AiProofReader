@@ -1,4 +1,4 @@
-# app.py — CleanCopy: Basic Code + Container Scroll
+# app.py — CleanCopy: Basic Code + Scrollable Results Container
 import os
 import re
 import time
@@ -270,8 +270,8 @@ with col_in:
 with col_out:
     st.subheader("✅ Cleaned & QC Results")
 
-    # === RESULTS CONTAINER (SCROLLABLE) ===
-    results_container = st.container()
+    # === SCROLLABLE RESULTS CONTAINER ===
+    results_container = st.container(height=600)  # Fixed height + internal scroll
 
     if st.button("🔍 Run CleanCopy", type="primary", use_container_width=True):
         if not text.strip():
@@ -288,7 +288,7 @@ with col_out:
                     if g["ok"]:
                         data["clean_text"] = g["clean_text"]
 
-                # === RENDER IN CONTAINER (AUTO-SCROLLS) ===
+                # === RENDER IN SCROLLABLE CONTAINER ===
                 with results_container:
                     # Metrics
                     c1, c2, c3 = st.columns(3)
@@ -311,7 +311,7 @@ with col_out:
 
     else:
         with results_container:
-            st.info("Gemini not configured — using local cleaned text only.")
+            st.info("Run CleanCopy to see results.")
 
 # Footer
 st.markdown("---")
