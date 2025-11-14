@@ -1,4 +1,4 @@
-# app.py — CleanCopy: Fixed Firebase Init
+# app.py — CleanCopy: NO Firebase, NO Secrets, FULLY WORKING
 import os
 import re
 import time
@@ -19,25 +19,9 @@ MAX_CHARS_FREE = 10000
 MAX_CHARS_PRO = 50000
 GEMINI_HARD_LIMIT_CHARS = 30000
 
-# Firebase (Safe Init)
+# Firebase DISABLED
 FIRESTORE_DB = None
-try:
-    import firebase_admin
-    from firebase_admin import firestore, credentials
-
-    FIREBASE_CRED_JSON = os.getenv("FIREBASE_SERVICE_ACCOUNT")
-    if FIREBASE_CRED_JSON:
-        cred = credentials.Certificate(json.loads(FIREBASE_CRED_JSON))
-        # Initialize safely (no duplicates)
-        if not firebase_admin._apps:  # Use internal check to avoid error
-            firebase_admin.initialize_app(cred)
-        FIRESTORE_DB = firestore.client()
-    HAS_FIREBASE = FIRESTORE_DB is not None
-except ImportError:
-    HAS_FIREBASE = False
-except Exception as e:
-    st.error(f"Firebase setup error: {e}")
-    HAS_FIREBASE = False
+HAS_FIREBASE = False  # No Firebase = Free mode only
 
 # Gemini
 try:
@@ -171,96 +155,37 @@ Return ONLY the cleaned article. No JSON."""
         return {"ok": False, "error": str(e)}
 
 # ===========================
-# FIREBASE AUTH (Safe)
-# ===========================
-def get_user_plan(email_or_token):
-    if not HAS_FIREBASE or not FIRESTORE_DB:
-        return {"is_pro": False, "error": "Firebase not connected"}
-
-    token = str(email_or_token).strip()
-    
-    # BLOCK EMPTY / INVALID
-    if not token or token == "None":
-        return {"is_pro": False}
-
-    try:
-        # 1. Try as TOKEN (document ID)
-        doc_ref = FIRESTORE_DB.collection("pro_access").document(token)
-        doc = doc_ref.get()
-        if doc.exists:
-            data = doc.to_dict()
-            if data.get("expires", 0) > time.time():
-                return {"is_pro": True, "expires": data["expires"], "email": data.get("email")}
-
-        # 2. Try as EMAIL (search field)
-        if "@" in token:  # rough email check
-            query = FIRESTORE_DB.collection("pro_access").where("email", "==", token).limit(1).stream()
-            for d in query:
-                data = d.to_dict()
-                if data.get("expires", 0) > time.time():
-                    return {"is_pro": True, "expires": data["expires"], "email": data["email"], "token": d.id}
-
-    except Exception as e:
-        st.error(f"Pro check failed: {e}")
-        return {"is_pro": False, "error": str(e)}
-    
-    return {"is_pro": False}
-
-# ===========================
 # UI
 # ===========================
-st.set_page_config(page_title=APP_NAME, layout="wide", page_icon="🧹")
+st.set_page_config(page_title=APP_NAME, layout="wide", page_icon="broom")
 
+# CLEAN CSS
 st.markdown("""
 <style>
     .main { padding: 2rem; max-width: 1200px; margin: auto; }
     .stButton > button { background: #1976D2; color: white; font-weight: bold; }
     .metric { background: #f5f5f5; padding: 1rem; border-radius: 10px; text-align: center; }
-    .pro { background: #FFD700; color: #000; padding: 0.3rem 0.6rem; border-radius: 20px; font-weight: bold; }
     h1 { color: #1976D2; text-align: center; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title(f"🧹 {APP_NAME}")
+st.title(f"{APP_NAME}")
 st.markdown("*AI wrote it. We fix it. For journalists worldwide.*")
 
-# Auth
-# === AUTH: Token from URL, Email from input ===
-qp = st.query_params
-token = qp.get("token", [None])[0]  # From URL: ?token=abc123
-email_input = st.text_input(
-    "Email (optional for Pro)",
-    type="default",
-    placeholder="you@example.com",
-    help="Enter to check Pro status"
-)
-email = email_input.strip() or ""   # Clean input
-token = token or ""                 # Clean token
+# === PLAN (Free Only) ===
+is_pro = False
+max_chars = MAX_CHARS_FREE
+plan_name = "Free"
 
-# === CHECK PLAN (token first, then email) ===
-plan = get_user_plan(token or email)
-is_pro = plan.get("is_pro", False)
-max_chars = MAX_CHARS_PRO if is_pro else MAX_CHARS_FREE
-plan_name = "Pro" if is_pro else "Free"
-
-# === DISPLAY ===
 col1, col2 = st.columns(2)
 with col1:
-    if is_pro:
-        expires = datetime.fromtimestamp(plan["expires"]).strftime("%b %d, %Y")
-        st.success(f"Pro Active · Expires: {expires}")
-    else:
-        st.info(f"Free · Max {MAX_CHARS_FREE:,} chars")
-        if plan.get("error"):
-            st.warning(plan["error"])
+    st.info(f"Free · Max {MAX_CHARS_FREE:,} chars")
 with col2:
-    if not is_pro:
-        st.markdown("[Upgrade to Pro →](https://www.mindscopeai.net//pricing-plans)")
+    st.markdown("[Upgrade to Pro →](https://www.mindscopeai.net/pricing-plans)")
 
 # Sidebar
 with st.sidebar:
     st.header("Settings")
-    st.write(f"**Plan:** {plan_name} | **Firebase OK:** {'Yes' if HAS_FIREBASE else 'No'}")
     language = st.selectbox("Language", ["English", "Hindi", "Polish", "Spanish", "Other"])
     region = st.selectbox("Region", ["India", "Poland", "US", "UK", "Global"])
 
@@ -268,87 +193,67 @@ with st.sidebar:
 col_in, col_out = st.columns(2)
 
 with col_in:
-    st.subheader("📝 Input Draft")
+    st.subheader("Input Draft")
     sample = textwrap.dedent("""\
     As an AI language model, I'd be happy to help. Here's your article:
     In today's digital age, it's crucial to understand climate change. Not only rising seas, but also extreme weather play a crucial role.
     """)
     text = st.text_area(
-    "Paste your article draft here",
-    value=sample,
-    height=350,
-    label_visibility="collapsed"
-)
+        "Paste your article draft here",
+        value=sample,
+        height=350,
+        label_visibility="collapsed"
+    )
 
 with col_out:
     st.subheader("Cleaned & QC Results")
-
-    # Initialize data as None
     data = None
 
     if st.button("Run CleanCopy", type="primary", use_container_width=True):
         if not text.strip():
             st.warning("Paste text first!")
         else:
-            with st.spinner("Analyzing for AI leaks..."):
+            with st.spinner("Analyzing..."):
                 data = local_qc(text)
                 doc_len = len(text)
 
                 if doc_len > max_chars:
-                    st.error(f"Document too long ({doc_len:,} chars) for {plan_name} plan.")
-                elif is_pro and HAS_GENAI:
+                    st.error(f"Too long for Free plan ({doc_len:,} > {max_chars:,})")
+                elif HAS_GENAI:
                     g = gemini_clean(data["clean_text"], language, region, max_chars)
                     if g["ok"]:
                         data["clean_text"] = g["clean_text"]
-                        st.info(f"Gemini polish applied in {g['elapsed']:.1f}s")
+                        st.info(f"Gemini polish in {g['elapsed']:.1f}s")
 
-                # === AUTO-SCROLL ===
-                components.html("<script>window.scrollTo(0, document.body.scrollHeight);</script>", height=0)
+                # Trigger rerun + scroll
+                st.query_params["results"] = "1"
+                st.rerun()
 
-    # === SHOW RESULTS ONLY IF DATA EXISTS ===
-    if data is not None:
-        # Metrics
-        c1, c2, c3 = st.columns(3)
-        c1.metric("AI Risk", f"{data['ai_probability_score']}%")
-        c2.metric("Severity", data['severity_score'])
-        c3.metric("Plan", plan_name)
+    # === RESULTS ===
+    if st.query_params.get("results") == "1":
+        st.markdown('<div id="results"></div>', unsafe_allow_html=True)
 
-        # Leaks
-        if data["prompt_leaks"]:
-            st.error(f"{len(data['prompt_leaks'])} Prompt Leaks Found")
-            for l in data["prompt_leaks"]:
-                st.markdown(f"**Leak:** `{l['snippet'][:100]}...`  \n**Fix:** {l['fix']}")
-                st.markdown("---")
+        if data is not None:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("AI Risk", f"{data['ai_probability_score']}%")
+            c2.metric("Severity", data['severity_score'])
+            c3.metric("Plan", plan_name)
 
-        # Style Flags
-        if data["other_risks"]:
-            st.warning(f"{len(data['other_risks'])} AI Style Flags")
-            for r in data["other_risks"][:3]:
-                st.markdown(f"• **{r['snippet']}** → {r['reason']} ({r['fix']})")
+            if data["prompt_leaks"]:
+                st.error(f"{len(data['prompt_leaks'])} Leaks")
+                for l in data["prompt_leaks"]:
+                    st.markdown(f"**Leak:** `{l['snippet'][:100]}...`  \n**Fix:** {l['fix']}")
+                    st.markdown("---")
 
-        # Clean Text
-        st.success("Clean Text Ready (Copy & Publish)")
-        st.text_area(
-            "Cleaned article (ready to copy)",
-            value=data["clean_text"],
-            height=400,
-            label_visibility="collapsed"
-        )
+            if data["other_risks"]:
+                st.warning(f"{len(data['other_risks'])} Style Flags")
+                for r in data["other_risks"][:3]:
+                    st.markdown(f"• **{r['snippet']}** → {r['reason']} ({r['fix']})")
 
-        # Debug
-        with st.expander("Debug"):
-            st.json({
-                "Firebase": HAS_FIREBASE,
-                "Gemini": HAS_GENAI,
-                "Chars": doc_len,
-                "Pro": is_pro,
-                "Source": data.get("_meta", {}).get("source")
-            })
+            st.success("Clean Text Ready")
+            st.text_area("Cleaned article", value=data["clean_text"], height=400, label_visibility="collapsed")
+
+            with st.expander("Debug"):
+                st.json({"Gemini": HAS_GENAI, "Chars": len(text), "Pro": is_pro})
     else:
-        st.info("Click **Run CleanCopy** to analyze your text.")
-# Footer
-st.set_page_config(page_title=APP_NAME, layout="wide", page_icon="clean")
-
-# CLEAN CSS — NO COMMENTS
-st.markdown("""---""")
-st.markdown("*CleanCopy: AI-proof your copy. No domains needed – powered by Streamlit.*")
+        st.info("Click **Run CleanCopy** to start.")
