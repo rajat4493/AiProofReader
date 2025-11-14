@@ -291,11 +291,13 @@ with col_in:
 
 # Replace lines 265-305 in your app.py with this:
 
+# Replace the entire OUTPUT section (lines 282-335) with this:
+
 with col_out:
     st.subheader("Cleaned & QC Results")
-
-    # Anchor for scroll target
-    results_anchor = st.empty()
+    
+    # Check if we should show results
+    show_results = st.session_state.get("show_results", False)
     
     if st.button("Run CleanCopy", type="primary", use_container_width=True):
         if not text.strip():
@@ -305,58 +307,70 @@ with col_out:
                 data = local_qc(text)
                 doc_len = len(text)
 
-                if doc_len > MAX_CHARS_FREE:
-                    st.error(f"Too long for Free plan ({doc_len:,} > {MAX_CHARS_FREE:,})")
-                elif HAS_GENAI:
-                    g = gemini_clean(data["clean_text"], language, region, MAX_CHARS_FREE)
-                    if g["ok"]:
-                        data["clean_text"] = g["clean_text"]
-                        st.info(f"Gemini polish in {g['elapsed']:.1f}s")
+                if doc_len > max_chars:
+                    st.error(f"Text exceeds {plan_name} limit ({doc_len:,} > {max_chars:,})")
+                else:
+                    if HAS_GENAI and is_pro:
+                        g = gemini_clean(data["clean_text"], language, region, max_chars)
+                        if g["ok"]:
+                            data["clean_text"] = g["clean_text"]
+                            st.info(f"Gemini polish in {g['elapsed']:.1f}s")
+                    
+                    # Store and trigger scroll
+                    st.session_state.results = data
+                    st.session_state.show_results = True
+                    st.rerun()  # Force immediate display
 
-                # Store results in session state
-                st.session_state.results = data
-                st.session_state.show_results = True
-
-    # Display results if available
-    if st.session_state.get("show_results"):
+    # Display results
+    if show_results and "results" in st.session_state:
         data = st.session_state.results
         
-        with results_anchor:
-            st.markdown('<div id="results-section"></div>', unsafe_allow_html=True)
+        st.markdown("---")
+        st.markdown("## 📊 Analysis Results")
         
-        st.markdown("## Results")
         c1, c2, c3 = st.columns(3)
-        c1.metric("AI Risk", f"{data['ai_probability_score']}%")
-        c2.metric("Severity", data['severity_score'])
-        c3.metric("Plan", plan_name)
+        with c1:
+            st.metric("AI Risk", f"{data['ai_probability_score']}%", 
+                     delta=f"Severity {data['severity_score']}/10")
+        with c2:
+            st.metric("Issues", len(data['prompt_leaks']) + len(data['other_risks']))
+        with c3:
+            st.metric("Plan", plan_name)
 
         if data["prompt_leaks"]:
-            st.error(f"{len(data['prompt_leaks'])} Leaks Found")
-            for l in data["prompt_leaks"]:
-                st.markdown(f"**Leak:** `{l['snippet'][:100]}...`  \n**Fix:** {l['fix']}")
-                st.markdown("---")
+            with st.expander(f"🚨 {len(data['prompt_leaks'])} Critical Leaks", expanded=True):
+                for l in data["prompt_leaks"]:
+                    st.error(f"**Found:** `{l['snippet'][:80]}...`")
+                    st.caption(f"💡 {l['fix']}")
 
         if data["other_risks"]:
-            st.warning(f"{len(data['other_risks'])} Style Flags")
-            for r in data["other_risks"][:3]:
-                st.markdown(f"• **{r['snippet']}** → {r['reason']} ({r['fix']})")
+            with st.expander(f"⚠️ {len(data['other_risks'])} Style Flags", expanded=False):
+                for r in data["other_risks"]:
+                    st.warning(f"**{r['snippet']}** • {r['reason']}")
+                    st.caption(f"💡 {r['fix']}")
 
-        st.success("Clean Text")
-        st.text_area("Output", value=data["clean_text"], height=400, label_visibility="collapsed")
+        st.markdown("### ✅ Cleaned Output")
+        cleaned = st.text_area(
+            "Copy cleaned text below",
+            value=data["clean_text"],
+            height=350,
+            label_visibility="collapsed"
+        )
         
-        # CSS-based scroll using :target selector
-        st.markdown("""
-        <style>
-            #results-section:target {
-                scroll-margin-top: 100px;
-            }
-        </style>
-        <script>
-            window.location.hash = '#results-section';
-        </script>
-        """, unsafe_allow_html=True)
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("🔄 Analyze New Text", use_container_width=True):
+                st.session_state.show_results = False
+                st.rerun()
+        with col_b:
+            st.download_button(
+                "💾 Download",
+                data=cleaned,
+                file_name=f"cleaned_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+                use_container_width=True
+            )
     else:
-        st.info("Click **Run CleanCopy** to start.")
+        st.info("👆 Click **Run CleanCopy** to analyze your text")
 # ----------------------------------------------------------------------
 # FOOTER
 # ----------------------------------------------------------------------
