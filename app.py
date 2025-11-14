@@ -350,14 +350,5 @@ with col_out:
 st.set_page_config(page_title=APP_NAME, layout="wide", page_icon="clean")
 
 # CLEAN CSS — NO COMMENTS
-st.markdown("""
-<style>
-    .main { padding: 2rem; max-width: 1200px; margin: auto; overflow-y: auto; }
-    .stButton > button { background: #1976D2; color: white; font-weight: bold; }
-    .metric { background: #f5f5f5; padding: 1rem; border-radius: 10px; text-align: center; }
-    .pro { background: #FFD700; color: #000; padding: 0.3rem 0.6rem; border-radius: 20px; font-weight: bold; }
-    h1 { color: #1976D2; text-align: center; }
-    .stButton > button:focus { scroll-margin-top: 100px; }
-</style>
-""", unsafe_allow_html=True)
+st.markdown("""---""")
 st.markdown("*CleanCopy: AI-proof your copy. No domains needed – powered by Streamlit.*")
