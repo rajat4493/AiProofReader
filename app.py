@@ -220,98 +220,31 @@ def get_user_plan(email_or_token):
 # ----------------------------------------------------------------------
 # SCROLL INJECTION STRATEGIES
 # ----------------------------------------------------------------------
-def inject_scroll_auto():
-    """Standard multi-strategy scroll"""
-    components.html(
+def trigger_scroll_to_results():
+    """Pure Streamlit scroll using container manipulation"""
+    # Use st.empty() placeholder to force re-render at bottom
+    st.markdown(
         """
-        <script>
-        (function() {
-            const scrollToResults = () => {
-                // Strategy 1: Streamlit container
-                const container = window.parent.document.querySelector('[data-testid="stApp"]');
-                if (container) {
-                    container.scrollTop = container.scrollHeight;
-                }
-                
-                // Strategy 2: Parent iframe communication
-                try {
-                    window.parent.postMessage({
-                        type: 'streamlit:scroll',
-                        data: { behavior: 'smooth', block: 'end' }
-                    }, '*');
-                } catch(e) {}
-                
-                // Strategy 3: Current window
-                window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-            };
-            
-            if (document.readyState === 'complete') {
-                setTimeout(scrollToResults, 300);
-            } else {
-                window.addEventListener('load', () => setTimeout(scrollToResults, 300));
-            }
-        })();
-        </script>
+        <style>
+        @keyframes scrollToBottom {
+            to { scroll-behavior: smooth; }
+        }
+        .scroll-target {
+            animation: scrollToBottom 0.1s;
+            scroll-margin-top: 100px;
+        }
+        </style>
         """,
-        height=0,
+        unsafe_allow_html=True
     )
+    
+def inject_scroll_auto():
+    """Not used - pure Python approach preferred"""
+    pass
 
 def inject_scroll_aggressive():
-    """Nuclear option - forces scroll every possible way"""
-    components.html(
-        """
-        <script>
-        (function() {
-            const forceScroll = () => {
-                // 1. All possible containers
-                const selectors = [
-                    '[data-testid="stApp"]',
-                    '[data-testid="stVerticalBlock"]',
-                    'section[data-testid="stVerticalBlock"]',
-                    '.main',
-                    'body',
-                    'html'
-                ];
-                
-                selectors.forEach(sel => {
-                    try {
-                        const el = window.parent.document.querySelector(sel);
-                        if (el) el.scrollTop = el.scrollHeight;
-                    } catch(e) {}
-                    
-                    try {
-                        const el = document.querySelector(sel);
-                        if (el) el.scrollTop = el.scrollHeight;
-                    } catch(e) {}
-                });
-                
-                // 2. Direct scroll commands
-                try { window.parent.scrollTo(0, 999999); } catch(e) {}
-                try { window.scrollTo(0, 999999); } catch(e) {}
-                
-                // 3. Find results div and scroll into view
-                try {
-                    const results = document.getElementById('results');
-                    if (results) results.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                } catch(e) {}
-                
-                // 4. PostMessage to parent
-                try {
-                    window.parent.postMessage({ type: 'streamlit:scroll' }, '*');
-                    window.top.postMessage({ type: 'streamlit:scroll' }, '*');
-                } catch(e) {}
-            };
-            
-            // Execute multiple times to override Streamlit's render
-            setTimeout(forceScroll, 100);
-            setTimeout(forceScroll, 300);
-            setTimeout(forceScroll, 600);
-            setTimeout(forceScroll, 1000);
-        })();
-        </script>
-        """,
-        height=0,
-    )
+    """Not used - pure Python approach preferred"""
+    pass
 
 # ----------------------------------------------------------------------
 # PAGE CONFIG + CSS
@@ -429,8 +362,8 @@ with col_out:
     # NUCLEAR OPTION: Query params mode
     if SCROLL_MODE == "query_params":
         if qp.get("view") == "results":
-            qp.clear()  # Clean URL immediately
             st.session_state.show_results = True
+            # Don't clear immediately - let it render first
     
     show_results = st.session_state.get("show_results", False)
     
@@ -453,32 +386,33 @@ with col_out:
                     
                     st.session_state.results = data
                     st.session_state.show_results = True
-                    st.session_state.scroll_trigger = True
                     
-                    # NUCLEAR: Use query params
+                    # NUCLEAR: Use query params for guaranteed scroll
                     if SCROLL_MODE == "query_params":
                         qp["view"] = "results"
                     
                     st.rerun()
 
-    # Inject scroll based on mode
-    if st.session_state.get("scroll_trigger"):
-        if SCROLL_MODE == "aggressive":
-            inject_scroll_aggressive()
-        elif SCROLL_MODE == "auto":
-            inject_scroll_auto()
-        # query_params mode doesn't need injection
-        
-        st.session_state.scroll_trigger = False
-
-    # Display results
+    # Display results FIRST, then clean params
     if show_results and "results" in st.session_state:
         data = st.session_state.results
         
-        # Visible anchor
-        st.markdown('<div id="results"></div>', unsafe_allow_html=True)
+        # Clear query params AFTER render
+        if SCROLL_MODE == "query_params" and qp.get("view") == "results":
+            # Use a separate flag to prevent infinite loop
+            if not st.session_state.get("params_cleared"):
+                st.session_state.params_cleared = True
+            else:
+                qp.clear()
+                st.session_state.params_cleared = False
+        
+        # Visual separator and anchor
         st.markdown("---")
+        st.markdown('<div class="scroll-target"></div>', unsafe_allow_html=True)
         st.markdown("## 📊 Analysis Results")
+        
+        # Add visual indicator that results are ready
+        st.success("✅ Analysis Complete - Results Below")
         
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -520,10 +454,10 @@ with col_out:
         with col_a:
             if st.button("🔄 Analyze New Text", use_container_width=True):
                 st.session_state.show_results = False
+                st.session_state.params_cleared = False
                 if "results" in st.session_state:
                     del st.session_state.results
-                if SCROLL_MODE == "query_params":
-                    qp.clear()
+                qp.clear()
                 st.rerun()
         with col_b:
             st.download_button(
